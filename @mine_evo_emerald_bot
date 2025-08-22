@@ -1,0 +1,29 @@
+from .. import loader, utils
+import asyncio
+
+@loader.tds
+class MineEvoMod(loader.Module):
+    """Автоматическая добыча изумрудов для @mine_evo_emerald_bot"""
+    strings = {"name": "MineEvoAuto"}
+
+    async def client_ready(self, client, db):
+        self._client = client
+        self.task = asyncio.create_task(self.mine_loop())
+        self.logger.info("MineEvoAuto активирован! Начинаю копать...")
+
+    async def mine_loop(self):
+        await asyncio.sleep(10)  # Ждем полной загрузки юзербота
+        while True:
+            try:
+                # Отправляем команду боту
+                await self._client.send_message("@mine_evo_emerald_bot", "Коп")
+                # Ждем 2 секунды перед следующей отправкой
+                await asyncio.sleep(2)
+            except Exception as e:
+                self.logger.error(f"Ошибка: {e}")
+                await asyncio.sleep(10)  # Ждем при ошибке
+
+    async def unload(self):
+        # Останавливаем задачу при выгрузке модуля
+        if hasattr(self, 'task'):
+            self.task.cancel()
