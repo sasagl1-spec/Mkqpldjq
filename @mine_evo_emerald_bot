@@ -1,5 +1,6 @@
 from .. import loader, utils
 import asyncio
+import logging
 
 @loader.tds
 class MineEvoMod(loader.Module):
@@ -8,8 +9,12 @@ class MineEvoMod(loader.Module):
 
     async def client_ready(self, client, db):
         self._client = client
-        self.task = asyncio.create_task(self.mine_loop())
+        self.db = db
+        # Создаем логгер для этого модуля
+        self.logger = logging.getLogger(__name__)
+        
         self.logger.info("MineEvoAuto активирован! Начинаю копать...")
+        self.task = asyncio.create_task(self.mine_loop())
 
     async def mine_loop(self):
         await asyncio.sleep(10)  # Ждем полной загрузки юзербота
