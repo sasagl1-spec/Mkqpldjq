@@ -1,34 +1,96 @@
 from .. import loader, utils
 import asyncio
-import logging
+from telethon import events
 
 @loader.tds
-class MineEvoMod(loader.Module):
-    """Автоматическая добыча изумрудов для @mine_evo_emerald_bot"""
-    strings = {"name": "MineEvoAuto"}
+class AutoCommentMod(loader.Module):
+    """Автоматический комментарий под новыми постами"""
+    strings = {"name": "AutoComment"}
 
     async def client_ready(self, client, db):
         self._client = client
         self.db = db
-        # Создаем логгер для этого модуля
-        self.logger = logging.getLogger(__name__)
+        self.comment_text = "Мне всего 13..."
         
-        self.logger.info("MineEvoAuto активирован! Начинаю копать...")
-        self.task = asyncio.create_task(self.mine_loop())
+        # Список каналов/чатов для отслеживания
+        self.watched_chats = []
+        
+        # Включаем обработчик новых сообщений
+        self._client.add_event_handler(
+            self.on_new_message,
+            events.NewMessage(outgoing=False)
+        )
 
-    async def mine_loop(self):
-        await asyncio.sleep(10)  # Ждем полной загрузки юзербота
-        while True:
+    async def on_new_message(self, event):
+        """Обработчик новых сообщений"""
+        try:
+            # Проверяем, что это пост в канале
+            if not event.is_channel or event.is_private:
+                return
+                
+            # Проверяем, что это именно пост (а не комментарий)
+            if event.message.reply_to_msg_id:
+                return
+                
+            # Проверяем, что этот чат в списке отслеживания
+            chat_id = event.chat_id
+            if chat_id not in self.watched_chats:
+                return
+                
+            # Ждем немного перед комментарием
+            await asyncio.sleep(5)
+            
+            # Отправляем комментарий
+            await event.message.reply(self.comment_text)
+            print(f"✅ Оставлен комментарий в чате {chat_id}")
+            
+        except Exception as e:
+            print(f"❌ Ошибка: {e}")
+
+    async def acaddcmd(self, message):
+        """Добавить текущий чат в список отслеживания"""
+        chat_id = message.chat_id
+        if chat_id not in self.watched_chats:
+            self.watched_chats.append(chat_id)
+            await utils.answer(message, "✅ Чат добавлен в список отслеживания")
+        else:
+            await utils.answer(message, "⚠️ Этот чат уже в списке")
+
+    async def acremcmd(self, message):
+        """Удалить текущий чат из списка отслеживания"""
+        chat_id = message.chat_id
+        if chat_id in self.watched_chats:
+            self.watched_chats.remove(chat_id)
+            await utils.answer(message, "✅ Чат удален из списка отслеживания")
+        else:
+            await utils.answer(message, "⚠️ Этого чата нет в списке")
+
+    async def aclistcmd(self, message):
+        """Показать список отслеживаемых чатов"""
+        if not self.watched_chats:
+            await utils.answer(message, "📝 Список отслеживаемых чатов пуст")
+            return
+            
+        response = "📝 Отслеживаемые чаты:\n"
+        for chat_id in self.watched_chats:
             try:
-                # Отправляем команду боту
-                await self._client.send_message("@mine_evo_emerald_bot", "Коп")
-                # Ждем 2 секунды перед следующей отправкой
-                await asyncio.sleep(2)
-            except Exception as e:
-                self.logger.error(f"Ошибка: {e}")
-                await asyncio.sleep(10)  # Ждем при ошибке
+                chat = await self._client.get_entity(chat_id)
+                response += f"• {chat.title}\n"
+            except:
+                response += f"• {chat_id}\n"
+                
+        await utils.answer(message, response)
+
+    async def actextcmd(self, message):
+        """Изменить текст комментария"""
+        args = utils.get_args_raw(message)
+        if not args:
+            await utils.answer(message, "📝 Текущий текст: " + self.comment_text)
+            return
+            
+        self.comment_text = args
+        await utils.answer(message, "✅ Текст комментария изменен")
 
     async def unload(self):
-        # Останавливаем задачу при выгрузке модуля
-        if hasattr(self, 'task'):
-            self.task.cancel()
+        """При выгрузке модуля"""
+        self._client.remove_event_handler(self.on_new_message)
