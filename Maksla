@@ -1,0 +1,148 @@
+# Telegram канал модулей: https://t.me/modulesTheHika
+# Создатель: @vipqlkxn
+
+from hikka import loader, utils
+from telethon.tl.functions.messages import SendMessageRequest
+from telethon.tl.functions.contacts import ResolveUsernameRequest
+import asyncio
+import re
+
+@loader.tds
+class GramPiarAutoMod(loader.Module):
+    """Автоматизация @gram_piarbot с архивацией"""
+    strings = {"name": "GramPiarAuto"}
+
+    async def client_ready(self, client, db):
+        self._client = client
+        self._db = db
+        self.bot_username = "gram_piarbot"
+        self.archive = []
+
+    async def send_to_bot(self, message_text):
+        """Отправка сообщения боту и получение ответа"""
+        try:
+            bot_entity = await self._client(ResolveUsernameRequest(self.bot_username))
+            bot_input = await self._client.get_input_entity(bot_entity.peer)
+            
+            await self._client(SendMessageRequest(
+                peer=bot_input,
+                message=message_text,
+                no_webpage=True
+            ))
+            
+            await asyncio.sleep(2)
+            async for msg in self._client.iter_messages(bot_input, limit=1):
+                if not msg.out:
+                    return msg.text
+            return None
+        except Exception:
+            return None
+
+    async def parse_tasks(self, response_text):
+        """Парсинг заданий из текста ответа бота"""
+        tasks = []
+        lines = response_text.split('\n')
+        
+        for i, line in enumerate(lines):
+            if ("✅ | Подписан" in line or "✅ | Subscribed" in line) and "Проверить" in lines[i+1]:
+                # Ищем ссылку в предыдущих строках
+                for j in range(max(0, i-3), i):
+                    if "t.me/" in lines[j] or "@" in lines[j]:
+                        task_link = lines[j].strip()
+                        tasks.append({
+                            'link': task_link,
+                            'check_line': i+1
+                        })
+                        break
+        return tasks
+
+    @loader.command()
+    async def piarautocmd(self, message):
+        """Автоподписка и проверка - .piarauto"""
+        try:
+            # Запускаем бота
+            start_msg = await self.send_to_bot("/start")
+            await asyncio.sleep(1)
+            
+            # Переходим в задания
+            tasks_msg = await self.send_to_bot("Задания")
+            if not tasks_msg:
+                await utils.answer(message, "❌ Не удалось получить задания")
+                return
+
+            # Парсим задания
+            tasks = await self.parse_tasks(tasks_msg)
+            if not tasks:
+                await utils.answer(message, "❌ Активные задания не найдены")
+                return
+
+            completed = 0
+            failed = 0
+
+            for task in tasks:
+                try:
+                    # Подписываемся на канал
+                    await self.send_to_bot(task['link'])
+                    await asyncio.sleep(3)
+                    
+                    # Нажимаем "Проверить"
+                    check_result = await self.send_to_bot("✅ Проверить")
+                    
+                    if check_result and ("проверка" in check_result.lower() or "verify" in check_result.lower()):
+                        # Архивируем успешную подписку
+                        self.archive.append(task['link'])
+                        completed += 1
+                        await asyncio.sleep(2)
+                    else:
+                        failed += 1
+                        
+                except Exception:
+                    failed += 1
+                    continue
+
+            # Формируем отчет
+            archive_text = "\n".join(self.archive[-10:])  # Последние 10 записей
+            await utils.answer(
+                message,
+                f"📊 Результат автоматизации:\n"
+                f"✅ Успешно: {completed}\n"
+                f"❌ Ошибок: {failed}\n\n"
+                f"📦 Архив ({len(self.archive)}):\n{archive_text}"
+            )
+
+        except Exception as e:
+            await utils.answer(message, f"❌ Ошибка: {str(e)}")
+
+    @loader.command()
+    async def piararchcmd(self, message):
+        """Показать архив - .piararch"""
+        if not self.archive:
+            await utils.answer(message, "📦 Архив пуст")
+            return
+        
+        archive_text = "\n".join(self.archive)
+        await utils.answer(message, f"📦 Архив заданий ({len(self.archive)}):\n\n{archive_text}")
+
+    @loader.command()
+    async def piarclearcmd(self, message):
+        """Очистить архив - .piarclear"""
+        self.archive.clear()
+        await utils.answer(message, "🗑️ Архив очищен")
+
+    @loader.command()
+    async def piarscancmd(self, message):
+        """Сканировать задания - .piarscan"""
+        try:
+            tasks_msg = await self.send_to_bot("Задания")
+            if not tasks_msg:
+                await utils.answer(message, "❌ Не удалось получить задания")
+                return
+
+            tasks = await self.parse_tasks(tasks_msg)
+            await utils.answer(
+                message,
+                f"🔍 Найдено заданий: {len(tasks)}\n"
+                f"📋 Примеры:\n" + "\n".join([t['link'] for t in tasks[:3]])
+            )
+        except Exception as e:
+            await utils.answer(message, f"❌ Ошибка сканирования: {str(e)}")
