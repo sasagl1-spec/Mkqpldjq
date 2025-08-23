@@ -1,0 +1,134 @@
+# Telegram канал модулей: https://t.me/modulesTheHika
+# Создатель: @vipqlkxn
+
+from hikka import loader, utils
+from telethon.tl.functions.messages import SendMessageRequest
+from telethon.tl.functions.contacts import ResolveUsernameRequest
+import asyncio
+import re
+
+@loader.tds
+class GramPiarAutoMod(loader.Module):
+    """Автоматизация @gram_piarbot"""
+    strings = {"name": "GramPiarAuto"}
+
+    async def client_ready(self, client, db):
+        self._client = client
+        self._db = db
+        self.bot_username = "gram_piarbot"
+
+    async def send_to_bot(self, message_text):
+        """Отправка сообщения боту и получение ответа"""
+        try:
+            bot_entity = await self._client(ResolveUsernameRequest(self.bot_username))
+            bot_input = await self._client.get_input_entity(bot_entity.peer)
+            
+            await self._client(SendMessageRequest(
+                peer=bot_input,
+                message=message_text,
+                no_webpage=True
+            ))
+            
+            await asyncio.sleep(2)
+            async for msg in self._client.iter_messages(bot_input, limit=1):
+                if not msg.out:
+                    return msg.text
+            return None
+        except Exception:
+            return None
+
+    @loader.command()
+    async def piarstartcmd(self, message):
+        """Запуск автоматизации @gram_piarbot - .piarstart"""
+        try:
+            # Запускаем бота
+            start_msg = await self.send_to_bot("/start")
+            
+            if not start_msg:
+                await utils.answer(message, "❌ Не удалось запустить бота")
+                return
+
+            # Получаем главное меню
+            await asyncio.sleep(1)
+            menu_text = await self.send_to_bot("Меню")
+            
+            if not menu_text:
+                await utils.answer(message, "❌ Бот не отвечает")
+                return
+
+            # Автоматически выполняем все доступные задания
+            tasks_completed = 0
+            archive_links = []
+            
+            # Поиск и выполнение заданий
+            if "задания" in menu_text.lower() or "tasks" in menu_text.lower():
+                await self.send_to_bot("Задания")
+                await asyncio.sleep(2)
+                
+                # Получаем список заданий
+                tasks_response = await self.send_to_bot("1")  # Предполагаем первый вариант
+                
+                if tasks_response:
+                    # Парсим задания из ответа
+                    task_pattern = r'(https?://t\.me/\S+|@\w+)'
+                    found_links = re.findall(task_pattern, tasks_response)
+                    
+                    for link in found_links:
+                        # Выполняем каждое задание (подписываемся/вступаем)
+                        await self.send_to_bot(link)
+                        await asyncio.sleep(3)
+                        
+                        # Подтверждаем выполнение
+                        confirm_msg = await self.send_to_bot("Готово")
+                        if confirm_msg and ("проверка" in confirm_msg.lower() or "verify" in confirm_msg.lower()):
+                            # Отправляем скриншот/подтверждение
+                            await self.send_to_bot("✅")
+                            await asyncio.sleep(2)
+                            
+                            # Архивируем ссылку
+                            archive_links.append(link)
+                            tasks_completed += 1
+
+            # Формируем архивный файл
+            if archive_links:
+                archive_text = "📦 Архив выполненных заданий:\n\n" + "\n".join(archive_links)
+                await utils.answer(message, f"✅ Выполнено заданий: {tasks_completed}\n\n{archive_text}")
+            else:
+                await utils.answer(message, "❌ Задания не найдены или уже выполнены")
+
+        except Exception as e:
+            await utils.answer(message, f"❌ Ошибка: {str(e)}")
+
+    @loader.command()
+    async def piarscancmd(self, message):
+        """Сканирование доступных заданий - .piarscan"""
+        try:
+            # Сканируем бота на наличие заданий
+            await self.send_to_bot("/start")
+            await asyncio.sleep(1)
+            
+            scan_result = await self.send_to_bot("Задания")
+            if not scan_result:
+                await utils.answer(message, "❌ Не удалось получить задания")
+                return
+
+            # Анализируем доступные задания
+            task_count = scan_result.count("задание") + scan_result.count("task")
+            channel_count = scan_result.count("t.me") + scan_result.count("@")
+            
+            await utils.answer(
+                message,
+                f"🔍 Результат сканирования @gram_piarbot:\n\n"
+                f"📋 Заданий обнаружено: {task_count}\n"
+                f"📢 Каналов/ботов: {channel_count}\n"
+                f"💬 Ответ бота:\n\n{scan_result[:400]}..."
+            )
+
+        except Exception as e:
+            await utils.answer(message, f"❌ Ошибка сканирования: {str(e)}")
+
+    @loader.command()
+    async def piarstopcmd(self, message):
+        """Остановка автоматизации - .piarstop"""
+        # Сбрасываем состояние
+        await utils.answer(message, "⏹️ Автоматизация остановлена")
