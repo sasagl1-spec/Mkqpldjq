@@ -3,24 +3,29 @@ import random
 from telethon import TelegramClient
 from telethon.tl.types import Channel, Chat
 
+# Добавляем импорт loader
+from hikka import loader
+
 # Настройки
 INTERVAL = 60  # Интервал в секундах (по умолчанию 60)
-TARGET_BOT = "@iris_black_bot"  # Целевой бот
+TARGET_BOT = "iris_black_bot"  # Целевой бот (без @)
 
-@loader.module(name="RandomDotSender", author="YourName")
 class RandomDotSenderMod(loader.Module):
     """Модуль для отправки точек в случайные чаты с ботом"""
-
+    
+    strings = {"name": "RandomDotSender"}
+    
     def __init__(self):
         self.task = None
+        self.interval = INTERVAL
 
-    async def on_start(self, client: TelegramClient):
+    async def client_ready(self, client, db):
         self.client = client
 
     @loader.command()
     async def startdot(self, message):
         """Запустить отправку точек"""
-        if self.task:
+        if self.task and not self.task.done():
             await message.edit("❌ Уже запущено!")
             return
 
@@ -30,7 +35,7 @@ class RandomDotSenderMod(loader.Module):
     @loader.command()
     async def stopdot(self, message):
         """Остановить отправку точек"""
-        if not self.task:
+        if not self.task or self.task.done():
             await message.edit("❌ Не запущено!")
             return
 
@@ -42,11 +47,15 @@ class RandomDotSenderMod(loader.Module):
     async def setinterval(self, message):
         """Установить интервал (в секундах)"""
         try:
-            global INTERVAL
-            INTERVAL = int(message.text.split()[1])
-            await message.edit(f"✅ Интервал установлен: {INTERVAL} сек")
-        except:
-            await message.edit("❌ Использование: .setinterval <секунды>")
+            args = message.text.split()
+            if len(args) < 2:
+                await message.edit("❌ Использование: .setinterval <секунды>")
+                return
+                
+            self.interval = int(args[1])
+            await message.edit(f"✅ Интервал установлен: {self.interval} сек")
+        except ValueError:
+            await message.edit("❌ Укажите число секунд")
 
     async def send_loop(self):
         while True:
@@ -61,24 +70,29 @@ class RandomDotSenderMod(loader.Module):
                     if isinstance(entity, (Channel, Chat)):
                         try:
                             participants = await self.client.get_participants(entity)
-                            if any(user.username == TARGET_BOT.lstrip('@') for user in participants if user.bot):
+                            bot_present = any(
+                                user.bot and user.username == TARGET_BOT 
+                                for user in participants
+                            )
+                            if bot_present:
                                 valid_chats.append(entity)
-                        except:
+                        except Exception as e:
+                            print(f"Ошибка проверки чата {entity.id}: {e}")
                             continue
 
                 if valid_chats:
                     # Выбираем случайный чат
                     random_chat = random.choice(valid_chats)
                     await self.client.send_message(random_chat, ".")
-                    print(f"Отправлено точка в чат: {random_chat.title}")
+                    print(f"Отправлена точка в чат: {getattr(random_chat, 'title', 'Unknown')}")
                 else:
                     print("❌ Чаты с ботом не найдены")
 
             except Exception as e:
-                print(f"Ошибка: {e}")
+                print(f"Критическая ошибка: {e}")
 
-            await asyncio.sleep(INTERVAL)
+            await asyncio.sleep(self.interval)
 
-    async def on_stop(self):
-        if self.task:
+    async def on_unload(self):
+        if self.task and not self.task.done():
             self.task.cancel()
