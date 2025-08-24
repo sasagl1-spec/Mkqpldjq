@@ -1,0 +1,84 @@
+import asyncio
+import random
+from telethon import TelegramClient
+from telethon.tl.types import Channel, Chat
+
+# Настройки
+INTERVAL = 60  # Интервал в секундах (по умолчанию 60)
+TARGET_BOT = "@iris_black_bot"  # Целевой бот
+
+@loader.module(name="RandomDotSender", author="YourName")
+class RandomDotSenderMod(loader.Module):
+    """Модуль для отправки точек в случайные чаты с ботом"""
+
+    def __init__(self):
+        self.task = None
+
+    async def on_start(self, client: TelegramClient):
+        self.client = client
+
+    @loader.command()
+    async def startdot(self, message):
+        """Запустить отправку точек"""
+        if self.task:
+            await message.edit("❌ Уже запущено!")
+            return
+
+        self.task = asyncio.create_task(self.send_loop())
+        await message.edit("✅ Рассылка запущена!")
+
+    @loader.command()
+    async def stopdot(self, message):
+        """Остановить отправку точек"""
+        if not self.task:
+            await message.edit("❌ Не запущено!")
+            return
+
+        self.task.cancel()
+        self.task = None
+        await message.edit("✅ Рассылка остановлена!")
+
+    @loader.command()
+    async def setinterval(self, message):
+        """Установить интервал (в секундах)"""
+        try:
+            global INTERVAL
+            INTERVAL = int(message.text.split()[1])
+            await message.edit(f"✅ Интервал установлен: {INTERVAL} сек")
+        except:
+            await message.edit("❌ Использование: .setinterval <секунды>")
+
+    async def send_loop(self):
+        while True:
+            try:
+                # Получаем все диалоги
+                dialogs = await self.client.get_dialogs()
+                valid_chats = []
+
+                for dialog in dialogs:
+                    entity = dialog.entity
+                    # Проверяем тип чата и наличие бота
+                    if isinstance(entity, (Channel, Chat)):
+                        try:
+                            participants = await self.client.get_participants(entity)
+                            if any(user.username == TARGET_BOT.lstrip('@') for user in participants if user.bot):
+                                valid_chats.append(entity)
+                        except:
+                            continue
+
+                if valid_chats:
+                    # Выбираем случайный чат
+                    random_chat = random.choice(valid_chats)
+                    await self.client.send_message(random_chat, ".")
+                    print(f"Отправлено точка в чат: {random_chat.title}")
+                else:
+                    print("❌ Чаты с ботом не найдены")
+
+            except Exception as e:
+                print(f"Ошибка: {e}")
+
+            await asyncio.sleep(INTERVAL)
+
+    async def on_stop(self):
+        if self.task:
+            self.task.cancel()
