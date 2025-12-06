@@ -1,0 +1,84 @@
+# meta developer: @your_username
+# scope: hikka_only
+
+from .. import loader, utils
+import re
+
+@loader.tds
+class RVReplacer(loader.Module):
+    """Автозамена рв на реквизиты"""
+    
+    strings = {"name": "RVReplacer"}
+    
+    def __init__(self):
+        self.enabled = True
+    
+    async def client_ready(self, client, db):
+        self.client = client
+        self.db = db
+    
+    async def watcher(self, message):
+        """Следим за сообщениями"""
+        if not self.enabled:
+            return
+        
+        # Только наши сообщения
+        if not message.out:
+            return
+        
+        # Только текстовые сообщения
+        if not message.text:
+            return
+        
+        # Ищем 'рв' в тексте
+        if "рв" in message.text.lower():
+            # Заменяем
+            new_text = re.sub(
+                r'(?i)\bрв\b',  # Ищем целое слово 'рв' (регистр не важен)
+                '+79902136543 ПСБ Банк\nВасилий К',
+                message.text
+            )
+            
+            # Если текст изменился
+            if new_text != message.text:
+                try:
+                    # Редактируем сообщение
+                    await message.edit(new_text)
+                except Exception as e:
+                    # Если не удалось отредактировать, игнорируем
+                    pass
+    
+    @loader.command()
+    async def rvon(self, message):
+        """Включить авто-замену"""
+        self.enabled = True
+        await utils.answer(message, "✅ Авто-замена 'рв' включена")
+    
+    @loader.command()
+    async def rvoff(self, message):
+        """Выключить авто-замену"""
+        self.enabled = False
+        await utils.answer(message, "⏹️ Авто-замена 'рв' выключена")
+    
+    @loader.command()
+    async def rvtest(self, message):
+        """Протестировать замену"""
+        test_text = "рв проверка рв тест"
+        new_text = re.sub(r'(?i)\bрв\b', '+79902136543 ПСБ Банк\nВасилий К', test_text)
+        
+        await utils.answer(
+            message,
+            f"🧪 **Тест замены:**\n"
+            f"**Исходный:** `{test_text}`\n"
+            f"**После замены:**\n`{new_text}`"
+        )
+    
+    @loader.command()
+    async def rvstatus(self, message):
+        """Статус модуля"""
+        status = "🟢 ВКЛЮЧЕНО" if self.enabled else "🔴 ВЫКЛЮЧЕНО"
+        await utils.answer(
+            message,
+            f"📊 **Статус RVReplacer:** {status}\n"
+            f"🔧 **Функция:** Автоматически заменяет 'рв' на реквизиты"
+        )
