@@ -1,0 +1,234 @@
+# meta developer: @kiminaiq
+# meta pic: https://img.icons8.com/color/48/000000/auto-replace.png
+# meta description: Автоматическая замена рв на реквизиты
+# scope: hikka_only
+# scope: hikka_min 1.6.0
+
+from .. import loader, utils
+import logging
+import re
+
+logger = logging.getLogger(__name__)
+
+@loader.tds
+class AutoReplacerMod(loader.Module):
+    """Автоматическая замена рв в сообщениях"""
+    
+    strings = {
+        "name": "AutoReplacer",
+        "help": "🔄 <b>Автоматическая замена</b>\n\n"
+                "🔧 <b>Настройки:</b>\n"
+                ".autoon - Включить авто-замену\n"
+                ".autooff - Выключить авто-замену\n"
+                ".autostatus - Статус\n"
+                ".addauto <слово> <замена> - Добавить слово\n"
+                ".listauto - Список замен\n"
+                ".delauto <номер> - Удалить замену\n"
+                ".testauto <текст> - Тест замены\n\n"
+                "📝 <b>По умолчанию:</b>\n"
+                "'рв' → '+79902136543 ПСБ Банк\\nВасилий К'",
+        "enabled": "✅ <b>Авто-замена включена</b>",
+        "disabled": "⏹️ <b>Авто-замена выключена</b>",
+        "already_enabled": "⚠️ <b>Авто-замена уже включена</b>",
+        "already_disabled": "⚠️ <b>Авто-замена уже выключена</b>",
+        "status_on": "🟢 <b>Авто-замена: ВКЛЮЧЕНА</b>",
+        "status_off": "🔴 <b>Авто-замена: ВЫКЛЮЧЕНА</b>",
+        "word_added": "✅ <b>Добавлено:</b> <code>{}</code> → <code>{}</code>",
+        "word_exists": "⚠️ <b>Слово уже существует</b>",
+        "word_removed": "🗑️ <b>Удалено:</b> <code>{}</code>",
+        "no_words": "📭 <b>Нет сохраненных замен</b>",
+        "words_list": "📋 <b>Список замен:</b>\n{}",
+        "invalid_number": "❌ <b>Неверный номер</b>",
+        "test_result": "🧪 <b>Тест авто-замены:</b>\n<b>Исходный:</b> {}\n<b>После замены:</b> {}",
+        "replaced_info": "🔄 <i>Сообщение автоматически заменено</i>",
+        "no_text": "❌ <b>Укажите текст для теста</b>"
+    }
+    
+    def __init__(self):
+        self.replacements = [
+            ("рв", "+79902136543 ПСБ Банк\nВасилий К"),
+            ("рф", "🇷🇺 Российская Федерация"),
+            ("спс", "Спасибо!"),
+            ("пж", "Пожалуйста")
+        ]
+        self.enabled = True
+        
+    async def client_ready(self, client, db):
+        self.client = client
+        self.db = db
+        
+        saved_replacements = self.db.get(__name__, "replacements", None)
+        if saved_replacements:
+            self.replacements = saved_replacements
+        
+        saved_enabled = self.db.get(__name__, "enabled", None)
+        if saved_enabled is not None:
+            self.enabled = saved_enabled
+        
+        logger.info(f"AutoReplacer загружен")
+    
+    async def watcher(self, message):
+        if not self.enabled:
+            return
+        
+        if not message.out or not message.text:
+            return
+        
+        if message.text.startswith(('.autoon', '.autooff', '.autostatus', 
+                                   '.addauto', '.listauto', '.delauto', '.testauto',
+                                   '.autohelp', '.addrvauto')):
+            return
+        
+        original_text = message.text
+        replaced_text = self._apply_auto_replace(original_text)
+        
+        if replaced_text != original_text:
+            try:
+                await message.edit(replaced_text)
+                await message.respond(self.strings("replaced_info"), reply_to=message.id)
+                logger.info(f"Сообщение заменено")
+            except Exception as e:
+                logger.error(f"Ошибка: {e}")
+    
+    @loader.command(
+        ru_doc="Включить авто-замену",
+        en_doc="Enable auto-replace"
+    )
+    async def autooncmd(self, message):
+        if self.enabled:
+            await utils.answer(message, self.strings("already_enabled"))
+            return
+        
+        self.enabled = True
+        self.db.set(__name__, "enabled", True)
+        await utils.answer(message, self.strings("enabled"))
+    
+    @loader.command(
+        ru_doc="Выключить авто-замену",
+        en_doc="Disable auto-replace"
+    )
+    async def autooffcmd(self, message):
+        if not self.enabled:
+            await utils.answer(message, self.strings("already_disabled"))
+            return
+        
+        self.enabled = False
+        self.db.set(__name__, "enabled", False)
+        await utils.answer(message, self.strings("disabled"))
+    
+    @loader.command(
+        ru_doc="Статус авто-замены",
+        en_doc="Auto-replace status"
+    )
+    async def autostatuscmd(self, message):
+        status_text = self.strings["status_on"] if self.enabled else self.strings["status_off"]
+        info = f"{status_text}\n📊 <b>Замен:</b> {len(self.replacements)}"
+        await utils.answer(message, info)
+    
+    @loader.command(
+        ru_doc="<слово> <замена> - Добавить авто-замену",
+        en_doc="<word> <replacement> - Add auto-replacement"
+    )
+    async def addautocmd(self, message):
+        args = utils.get_args(message)
+        
+        if len(args) < 2:
+            await utils.answer(message, "❌ Формат: .addauto <слово> <замена>")
+            return
+        
+        word = args[0].lower()
+        replacement = " ".join(args[1:])
+        
+        for existing_word, _ in self.replacements:
+            if existing_word == word:
+                await utils.answer(message, self.strings("word_exists"))
+                return
+        
+        self.replacements.insert(0, (word, replacement))
+        self._save_replacements()
+        
+        await utils.answer(message, self.strings("word_added").format(word, replacement))
+    
+    @loader.command(
+        ru_doc="Список авто-замен",
+        en_doc="List auto-replacements"
+    )
+    async def listautocmd(self, message):
+        if not self.replacements:
+            await utils.answer(message, self.strings("no_words"))
+            return
+        
+        list_text = ""
+        for i, (word, replacement) in enumerate(self.replacements, 1):
+            list_text += f"{i}. <code>{word}</code> → <code>{replacement[:30]}</code>\n"
+        
+        await utils.answer(message, self.strings("words_list").format(list_text))
+    
+    @loader.command(
+        ru_doc="<номер> - Удалить авто-замену",
+        en_doc="<number> - Remove auto-replacement"
+    )
+    async def delautocmd(self, message):
+        args = utils.get_args(message)
+        
+        if not args:
+            await utils.answer(message, "❌ Укажите номер")
+            return
+        
+        try:
+            word_num = int(args[0]) - 1
+            
+            if 0 <= word_num < len(self.replacements):
+                removed_word, _ = self.replacements.pop(word_num)
+                self._save_replacements()
+                await utils.answer(message, self.strings("word_removed"].format(removed_word))
+            else:
+                await utils.answer(message, self.strings("invalid_number"))
+        except:
+            await utils.answer(message, self.strings("invalid_number"))
+    
+    @loader.command(
+        ru_doc="<текст> - Тест авто-замены",
+        en_doc="<text> - Test auto-replacement"
+    )
+    async def testautocmd(self, message):
+        text = utils.get_args_raw(message)
+        
+        if not text:
+            await utils.answer(message, self.strings("no_text"))
+            return
+        
+        replaced_text = self._apply_auto_replace(text)
+        await utils.answer(message, self.strings("test_result").format(text, replaced_text))
+    
+    @loader.command(
+        ru_doc="Быстро добавить рв",
+        en_doc="Quick add рв"
+    )
+    async def addrvautocmd(self, message):
+        self.replacements = [(w, r) for w, r in self.replacements if w != "рв"]
+        self.replacements.insert(0, ("рв", "+79902136543 ПСБ Банк\nВасилий К"))
+        self._save_replacements()
+        
+        await utils.answer(message, "✅ Авто-замена 'рв' добавлена")
+    
+    @loader.command(
+        ru_doc="Помощь",
+        en_doc="Help"
+    )
+    async def autohelpcmd(self, message):
+        await utils.answer(message, self.strings("help"))
+    
+    def _apply_auto_replace(self, text):
+        result = text
+        for word, replacement in self.replacements:
+            pattern = r'\b' + re.escape(word) + r'\b'
+            result = re.sub(pattern, replacement, result, flags=re.IGNORECASE)
+        return result
+    
+    def _save_replacements(self):
+        self.db.set(__name__, "replacements", self.replacements)
+    
+    async def on_unload(self):
+        self._save_replacements()
+        self.db.set(__name__, "enabled", self.enabled)
