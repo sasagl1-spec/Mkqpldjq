@@ -1,0 +1,233 @@
+# meta developer: @your_username
+# meta pic: https://img.icons8.com/color/48/000000/advertisement.png
+# meta license: MIT
+
+import asyncio
+import time
+from datetime import datetime
+from telethon.tl.types import Message
+
+from .. import loader, utils
+
+@loader.tds
+class AdvertiserMod(loader.Module):
+    """Модуль для автоматической рассылки рекламы в чаты"""
+    
+    strings = {
+        "name": "Advertiser",
+        "on": "✅ <b>Рассылка активирована</b>",
+        "off": "❌ <b>Рассылка остановлена</b>",
+        "stats": (
+            "📊 <b>Статистика рассылки:</b>\n"
+            "• Всего отправок: {}\n"
+            "• Последняя отправка: {}\n"
+            "• Следующая через: {} сек.\n"
+            "• Сообщений до спец-рассылки: {}/73"
+        )
+    }
+
+    def __init__(self):
+        self.config = loader.ModuleConfig(
+            loader.ConfigValue(
+                "delay_between_chats",
+                16,
+                "Задержка между чатами (сек)",
+                validator=loader.validators.Integer(minimum=5, maximum=60)
+            ),
+            loader.ConfigValue(
+                "main_interval",
+                607,
+                "Основной интервал (сек)",
+                validator=loader.validators.Integer(minimum=300, maximum=3600)
+            ),
+            loader.ConfigValue(
+                "special_chat_delay",
+                73,
+                "Сообщений до спец-рассылки",
+                validator=loader.validators.Integer(minimum=10, maximum=200)
+            )
+        )
+        
+        self.ad_task = None
+        self.message_count = 0
+        self.total_sent = 0
+        self.last_sent = "Никогда"
+        self.running = False
+        
+        # Списки чатов
+        self.main_chats = [
+            "https://t.me/GalaxyChat_Garants",
+            "https://t.me/garantferz",
+            "https://t.me/loneasCHATIK", 
+            "https://t.me/nft_chatp",
+            "https://t.me/chatsell_clix",
+            "https://t.me/syndicate_garant",
+            "https://t.me/VIP_GARANT_Chat",
+            "https://t.me/nft_chatiqs",
+            "https://t.me/VIP_GARANT_Chat"
+        ]
+        
+        self.special_chat = "https://t.me/TonTakeGarant"
+
+    async def client_ready(self, client, db):
+        self.client = client
+        self.db = db
+        self._me = await client.get_me()
+
+    async def watcher(self, message: Message):
+        """Счетчик исходящих сообщений"""
+        if hasattr(message, "out") and message.out:
+            self.message_count += 1
+            
+            # Проверка на спец-рассылку каждые 73 сообщения
+            if self.message_count >= self.config["special_chat_delay"]:
+                self.message_count = 0
+                await self.send_special_ad()
+    
+    async def send_special_ad(self):
+        """Отправка сообщения в спец-чат"""
+        try:
+            message_text = (
+                "🎯 <b>НАКРУТКА ДЛЯ ВСЕХ ПЛАТФОРМ:</b>\n"
+                "— Telegram, TikTok, ВКонтакте, Facebook, Instagram\n"
+                "Услуги: просмотры, реакции, подписчики, репосты, рефералы.\n\n"
+                
+                "⭐️ <b>ЗВЁЗДЫ ТЕЛЕГРАМ (от 1,000 шт.)</b> — 1,450₽\n\n"
+                
+                "🇺🇸 <b>ПРОДАМ АККАУНТЫ США (старые):</b>\n"
+                "• 2015 — 950₽\n"
+                "• 2016 — 750₽\n"
+                "• 2017 — 520₽\n"
+                "• 2018 — 450₽\n\n"
+                
+                "💵 Оплату принимаю в ₽/Крипте/$"
+            )
+            
+            await self.client.send_message(self.special_chat, message_text)
+            self.total_sent += 1
+        except Exception as e:
+            print(f"Ошибка отправки в спец-чат: {e}")
+
+    async def send_main_ads(self):
+        """Отправка основной рекламы во все чаты"""
+        if not self.running:
+            return
+            
+        main_ad_text = (
+            "💰 <b>ПРАЙС-ЛИСТ НА ГАРАНТА</b>\n\n"
+            "• <b>1 месяц</b> — 150₽\n"
+            "• <b>3 месяца</b> — 400₽\n"  
+            "• <b>6 месяцев</b> — 750₽\n"
+            "• <b>12 месяцев</b> — 1400₽\n\n"
+            
+            "🎯 <b>НАКРУТКА ДЛЯ ВСЕХ ПЛАТФОРМ:</b>\n"
+            "— Telegram, TikTok, ВКонтакте, Facebook, Instagram\n"
+            "Услуги: просмотры, реакции, подписчики, репосты, рефералы.\n\n"
+            
+            "📱 <b>Telegram-аккаунты</b>\n"
+            "⬇️ <b>В наличии</b> ⬇️\n"
+            "• +1 США Чистый авторег | Пустой | — 80₽\n"
+            "• +880 Бангладеш | Авторег — 80₽\n"
+            "• +95 Мьянма | Авторег | — 80₽\n"
+            "• +254 Кения | Авторег — 80₽\n"
+            "<i>Отлежка минимальная 7 дней - максимальная 6 месяцев</i>\n\n"
+            
+            "🇺🇸 <b>АККАУНТЫ США (старые):</b>\n"
+            "• 2015 год регистрации — 950₽\n"
+            "• 2016 год регистрации — 750₽\n"
+            "• 2017 год регистрации — 520₽\n"
+            "• 2018 год регистрации — 450₽\n\n"
+            
+            "💵 Оплату принимаю в ₽/тон/$/голде в ирисе\n\n"
+            "⚠️ <i>За слёт аккаунтов ответственности не несу</i> ⚠️"
+        )
+        
+        for chat in self.main_chats:
+            if not self.running:
+                break
+                
+            try:
+                await self.client.send_message(chat, main_ad_text)
+                self.total_sent += 1
+                
+                # Задержка между чатами
+                await asyncio.sleep(self.config["delay_between_chats"])
+            except Exception as e:
+                print(f"Ошибка отправки в {chat}: {e}")
+                continue
+        
+        self.last_sent = datetime.now().strftime("%H:%M:%S")
+        
+        # Ожидание до следующего цикла
+        await asyncio.sleep(self.config["main_interval"])
+
+    async def ad_task_loop(self):
+        """Основной цикл рассылки"""
+        while self.running:
+            await self.send_main_ads()
+
+    @loader.command()
+    async def adstart(self, message):
+        """Запустить автоматическую рассылку"""
+        if self.running:
+            await utils.answer(message, "🔄 <b>Рассылка уже запущена</b>")
+            return
+            
+        self.running = True
+        self.message_count = 0
+        self.ad_task = asyncio.create_task(self.ad_task_loop())
+        
+        await utils.answer(message, self.strings("on"))
+
+    @loader.command()
+    async def adstop(self, message):
+        """Остановить рассылку"""
+        if not self.running:
+            await utils.answer(message, "❌ <b>Рассылка не запущена</b>")
+            return
+            
+        self.running = False
+        if self.ad_task:
+            self.ad_task.cancel()
+        
+        await utils.answer(message, self.strings("off"))
+
+    @loader.command()
+    async def adstats(self, message):
+        """Показать статистику рассылки"""
+        if not self.running:
+            await utils.answer(message, "❌ <b>Рассылка не запущена</b>")
+            return
+            
+        next_send = self.config["main_interval"]
+        
+        stats_text = self.strings("stats").format(
+            self.total_sent,
+            self.last_sent,
+            next_send,
+            self.message_count,
+            self.config["special_chat_delay"]
+        )
+        
+        await utils.answer(message, stats_text)
+
+    @loader.command()
+    async def adtest(self, message):
+        """Тестовая отправка во все чаты (1 раз)"""
+        old_state = self.running
+        self.running = False
+        
+        # Отправка основной рекламы
+        main_ad_text = "..."
+        for chat in self.main_chats:
+            try:
+                await self.client.send_message(chat, main_ad_text)
+                await asyncio.sleep(2)
+            except:
+                continue
+        
+        # Отправка спец-рекламы
+        await self.send_special_ad()
+        
+        self.running = old_state
+        await utils.answer(message, "✅ <b>Тестовая отправка завершена</b>")
