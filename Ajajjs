@@ -1,0 +1,218 @@
+# meta developer: @your_username
+# scope: hikka_only
+
+from .. import loader, utils
+import asyncio
+import time
+import logging
+
+logger = logging.getLogger(__name__)
+
+@loader.tds
+class PremiumPoster(loader.Module):
+    """Красивая рассылка премиум услуг"""
+    
+    strings = {"name": "PremiumPoster"}
+    
+    def __init__(self):
+        self.task = None
+        self.is_running = False
+        
+        # Красивый текст сообщения
+        self.message_text = """<b>🔥 ПРЕМИУМ УСЛУГИ И АККАУНТЫ 🔥</b>
+
+<b>💰 СТОИМОСТЬ НА ПЕРИОД:</b>
+┌ 1 месяц — <code>150₽</code>
+├ 3 месяца — <code>400₽</code>
+├ 6 месяцев — <code>750₽</code>
+└ 12 месяцев — <code>1400₽</code>
+
+<b>🎯 НАКРУТКА ДЛЯ ВСЕХ ПЛАТФОРМ:</b>
+├ Telegram
+├ TikTok
+├ ВКонтакте
+├ Facebook
+└ Instagram
+
+<b>✅ Услуги:</b>
+• Просмотры
+• Реакции
+• Подписчики
+• Репосты
+• Рефералы
+
+<b>📱 TELEGRAM-АККАУНТЫ В НАЛИЧИИ:</b>
+
+<b>🇺🇸 +1 США</b>
+┌ Чистый авторег
+├ Пустой
+└ <code>80₽</code>
+
+<b>🇧🇩 +880 Бангладеш</b>
+├ Авторег
+└ <code>80₽</code>
+
+<b>🇲🇲 +95 Мьянма</b>
+├ Авторег
+└ <code>80₽</code>
+
+<b>🇰🇪 +254 Кения</b>
+├ Авторег
+└ <code>80₽</code>
+
+<b>📅 Отлежка:</b> от 7 дней до 6 месяцев
+
+<b>🇺🇸 СТАРЫЕ АККАУНТЫ США:</b>
+┌ 2015 год — <code>950₽</code>
+├ 2016 год — <code>750₽</code>
+├ 2017 год — <code>520₽</code>
+└ 2018 год — <code>450₽</code>
+
+<b>💳 ПРИНИМАЮ ОПЛАТУ:</b>
+• ₽ (Рубли)
+• TON
+• $
+• Gold в Iris
+
+<b>⚠️ ВАЖНО:</b>
+<i>За слёт аккаунтов ответственности не несу</i>
+
+<b>📬 Контакт:</b> @your_contact_here"""
+        
+        # Чаты для рассылки
+        self.target_chats = [
+            "@GalaxyChat_Garants",
+            "@garantferz", 
+            "@loneasCHATIK",
+            "@nft_chatp",
+            "@chatsell_clix",
+            "@syndicate_garant",
+            "@VIP_GARANT_Chat",
+            "@nft_chatiqs"
+        ]
+        
+        self.chat_interval = 16
+        self.full_cycle = 607
+        self.current_index = 0
+        self.message_count = 0
+        
+    async def client_ready(self, client, db):
+        self.client = client
+        self.db = db
+    
+    @loader.command()
+    async def pstart(self, message):
+        """Запустить красивую рассылку"""
+        if self.is_running:
+            await utils.answer(message, "⚠️ Уже работает")
+            return
+        
+        self.is_running = True
+        self.task = asyncio.create_task(self._beautiful_loop())
+        
+        await utils.answer(
+            message,
+            f"✅ <b>Красивая рассылка запущена!</b>\n"
+            f"📢 Чатов: {len(self.target_chats)}\n"
+            f"⏱ Интервал: {self.chat_interval} сек\n"
+            f"🔄 Цикл: {self.full_cycle} сек"
+        )
+    
+    @loader.command()
+    async def pstop(self, message):
+        """Остановить рассылку"""
+        if not self.is_running:
+            await utils.answer(message, "📭 Не запущена")
+            return
+        
+        self.is_running = False
+        if self.task:
+            self.task.cancel()
+            self.task = None
+        
+        await utils.answer(message, "⏹️ Рассылка остановлена")
+    
+    @loader.command()
+    async def ptest(self, message):
+        """Тест оформления"""
+        try:
+            # Показываем как будет выглядеть
+            await utils.answer(message, self.message_text)
+            
+            # Отправляем в первый чат для теста
+            if self.target_chats:
+                await self.client.send_message(
+                    self.target_chats[0],
+                    self.message_text,
+                    parse_mode='HTML'
+                )
+                await message.respond("✅ Тест отправлен в первый чат")
+                
+        except Exception as e:
+            await utils.answer(message, f"❌ Ошибка: {str(e)}")
+    
+    @loader.command()
+    async def pstatus(self, message):
+        """Статус"""
+        status = "🟢 Работает" if self.is_running else "🔴 Остановлена"
+        
+        info = f"<b>📊 Статус PremiumPoster:</b>\n"
+        info += f"<b>Состояние:</b> {status}\n"
+        info += f"<b>📤 Отправлено:</b> {self.message_count}\n"
+        info += f"<b>💬 Чатов:</b> {len(self.target_chats)}\n"
+        
+        if self.is_running:
+            current = self.target_chats[self.current_index % len(self.target_chats)]
+            info += f"<b>⏳ Текущий чат:</b> {current}"
+        
+        await utils.answer(message, info)
+    
+    async def _beautiful_loop(self):
+        """Красивый цикл рассылки"""
+        while self.is_running:
+            try:
+                # Отправляем во все чаты
+                for i, chat in enumerate(self.target_chats):
+                    if not self.is_running:
+                        break
+                    
+                    self.current_index = i
+                    
+                    try:
+                        # Отправляем красиво оформленное сообщение
+                        await self.client.send_message(
+                            chat,
+                            self.message_text,
+                            parse_mode='HTML'  # Важно для форматирования
+                        )
+                        
+                        self.message_count += 1
+                        logger.info(f"Красивое сообщение отправлено в {chat}")
+                        
+                        # Ждем интервал
+                        if i < len(self.target_chats) - 1:
+                            for _ in range(self.chat_interval):
+                                if not self.is_running:
+                                    break
+                                await asyncio.sleep(1)
+                        
+                    except Exception as e:
+                        logger.error(f"Ошибка в {chat}: {e}")
+                        await asyncio.sleep(5)
+                
+                # Ждем полный цикл
+                if self.is_running:
+                    logger.info(f"Цикл завершен, ждем {self.full_cycle} сек")
+                    for _ in range(self.full_cycle):
+                        if not self.is_running:
+                            break
+                        await asyncio.sleep(1)
+                
+            except Exception as e:
+                logger.error(f"Ошибка цикла: {e}")
+                await asyncio.sleep(30)
+    
+    async def on_unload(self):
+        self.is_running = False
+        if self.task:
+            self.task.cancel()
