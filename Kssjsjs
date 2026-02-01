@@ -1,0 +1,388 @@
+# meta developer: @your_username
+# meta pic: https://img.icons8.com/color/48/000000/incognito.png
+# meta description: Пересылка сообщений со скрытием источника
+# scope: hikka_only
+# scope: hikka_min 1.6.0
+
+import asyncio
+import time
+from datetime import datetime
+from .. import loader, utils
+import logging
+
+logger = logging.getLogger(__name__)
+
+@loader.tds
+class StealthCrossPoster(loader.Module):
+    """Пересылка сообщений с возможностью скрытия источника"""
+    
+    strings = {
+        "name": "StealthPoster",
+        "help": "🔄 <b>Скрытая пересылка</b>\n\n"
+                "<b>Команды:</b>\n"
+                ".stealthstart - Запустить\n"
+                ".stealthstop - Остановить\n"
+                ".stealthstatus - Статус\n"
+                ".stealthmode <on/off> - Режим скрытия\n"
+                ".stealthtest - Тест\n"
+                ".stealthlist - Чаты\n",
+        "started": "✅ <b>Запущено!</b>\n"
+                   "🎭 <b>Режим:</b> {}\n"
+                   "📤 <b>Источник:</b> {}\n"
+                   "📢 <b>Чатов:</b> {}\n"
+                   "⏱ <b>Цикл:</b> {} сек\n"
+                   "⏳ <b>Интервал:</b> {} сек",
+        "stopped": "⏹️ <b>Остановлено</b>",
+        "mode_changed": "🎭 <b>Режим скрытия:</b> {}",
+        "already_on": "⚠️ <b>Уже работает</b>",
+        "not_running": "📭 <b>Не запущено</b>",
+        "test_sent": "🧪 <b>Тест отправлен</b>",
+        "error": "❌ <b>Ошибка:</b> {}"
+    }
+    
+    def __init__(self):
+        self.task = None
+        self.is_running = False
+        self.hide_source = True  # По умолчанию скрываем источник
+        
+        # Сообщение для парсинга
+        self.source_link = "https://t.me/manqiin/54"
+        self.message_text = None  # Будет загружено при старте
+        
+        # Чаты
+        self.target_chats = [
+            "@GalaxyChat_Garants",
+            "@garantferz", 
+            "@loneasCHATIK",
+            "@nft_chatp",
+            "@chatsell_clix",
+            "@syndicate_garant",
+            "@VIP_GARANT_Chat",
+            "@nft_chatiqs"
+        ]
+        
+        # Особый чат и сообщение
+        self.special_chat = "@TonTakeGarant"
+        self.special_text = """🎯 НАКРУТКА ДЛЯ ВСЕХ ПЛАТФОРМ:
+— Telegram, TikTok, ВКонтакте, Facebook, Instagram
+Услуги: просмотры, реакции, подписчики, репосты, рефералы.
+
+⭐️ ЗВЁЗДЫ ТЕЛЕГРАМ (от 1,000 шт.) — 1,450₽
+
+🇺🇸 ПРОДАМ АККАУНТЫ США (старые):
+• 2015 — 950₽
+• 2016 — 750₽
+• 2017 — 520₽
+• 2018 — 450₽
+
+💵 Оплату принимаю в ₽/Крипте/$"""
+        
+        # Тайминги
+        self.full_cycle = 607
+        self.chat_interval = 16
+        self.special_every = 73
+        
+        # Статистика
+        self.message_count = 0
+        self.special_count = 0
+        self.cycle_count = 0
+        self.current_chat_index = 0
+        
+    async def client_ready(self, client, db):
+        self.client = client
+        self.db = db
+        
+        # Пробуем загрузить сообщение при старте
+        await self._load_source_message()
+        
+        logger.info("StealthPoster загружен")
+    
+    @loader.command(
+        ru_doc="Запустить скрытую пересылку",
+        en_doc="Start stealth cross-posting"
+    )
+    async def stealthstartcmd(self, message):
+        """Запустить"""
+        if self.is_running:
+            await utils.answer(message, self.strings("already_on"))
+            return
+        
+        # Загружаем исходное сообщение
+        loaded = await self._load_source_message()
+        if not loaded and self.hide_source:
+            await utils.answer(message, "❌ Не удалось загрузить исходное сообщение")
+            return
+        
+        self.is_running = True
+        self.task = asyncio.create_task(self._stealth_loop())
+        
+        mode = "СКРЫТЫЙ" if self.hide_source else "ОТКРЫТЫЙ"
+        
+        await utils.answer(
+            message,
+            self.strings("started").format(
+                mode,
+                self.source_link,
+                len(self.target_chats),
+                self.full_cycle,
+                self.chat_interval
+            )
+        )
+        
+        logger.info(f"Скрытая пересылка запущена, режим: {mode}")
+    
+    @loader.command(
+        ru_doc="Остановить пересылку",
+        en_doc="Stop posting"
+    )
+    async def stealthstopcmd(self, message):
+        """Остановить"""
+        if not self.is_running:
+            await utils.answer(message, self.strings("not_running"))
+            return
+        
+        self.is_running = False
+        if self.task:
+            self.task.cancel()
+            self.task = None
+        
+        await utils.answer(message, self.strings("stopped"))
+        logger.info("Пересылка остановлена")
+    
+    @loader.command(
+        ru_doc="<on/off> - Включить/выключить скрытие источника",
+        en_doc="<on/off> - Toggle source hiding"
+    )
+    async def stealthmodecmd(self, message):
+        """Режим скрытия"""
+        args = utils.get_args_raw(message).lower()
+        
+        if args == "on":
+            self.hide_source = True
+            mode = "ВКЛЮЧЕНО"
+            # Перезагружаем сообщение для режима скрытия
+            await self._load_source_message()
+        elif args == "off":
+            self.hide_source = False
+            mode = "ВЫКЛЮЧЕНО"
+        else:
+            current = "ВКЛЮЧЕНО" if self.hide_source else "ВЫКЛЮЧЕНО"
+            await utils.answer(message, f"🎭 <b>Текущий режим:</b> {current}")
+            return
+        
+        await utils.answer(message, self.strings("mode_changed").format(mode))
+        logger.info(f"Режим скрытия: {mode}")
+    
+    @loader.command(
+        ru_doc="Статус пересылки",
+        en_doc="Posting status"
+    )
+    async def stealthstatuscmd(self, message):
+        """Статус"""
+        status = "🟢 Работает" if self.is_running else "🔴 Остановлена"
+        mode = "🎭 Скрытый" if self.hide_source else "📤 Открытый"
+        
+        info = f"📊 <b>Статус:</b> {status}\n"
+        info += f"{mode}\n"
+        info += f"📤 <b>Отправлено:</b> {self.message_count}\n"
+        info += f"🎯 <b>Особых:</b> {self.special_count}\n"
+        info += f"🔄 <b>Циклов:</b> {self.cycle_count}\n"
+        info += f"💬 <b>Текущий чат:</b> {self.target_chats[self.current_chat_index] if self.current_chat_index < len(self.target_chats) else '—'}"
+        
+        await utils.answer(message, info)
+    
+    @loader.command(
+        ru_doc="Тестовая отправка",
+        en_doc="Test send"
+    )
+    async def stealthtestcmd(self, message):
+        """Тест"""
+        try:
+            # Загружаем сообщение если еще не загружено
+            if not self.message_text and self.hide_source:
+                loaded = await self._load_source_message()
+                if not loaded:
+                    await utils.answer(message, "❌ Не удалось загрузить сообщение")
+                    return
+            
+            # Отправляем в первый чат для теста
+            chat = self.target_chats[0] if self.target_chats else "@GalaxyChat_Garants"
+            
+            if self.hide_source and self.message_text:
+                # Скрытый режим - копируем текст
+                await self._send_hidden_copy(chat, self.message_text)
+            else:
+                # Открытый режим - пересылаем
+                await self._forward_message(chat)
+            
+            await utils.answer(message, self.strings("test_sent"))
+            
+        except Exception as e:
+            await utils.answer(message, self.strings("error").format(str(e)))
+    
+    @loader.command(
+        ru_doc="Показать список чатов",
+        en_doc="Show chat list"
+    )
+    async def stealthlistcmd(self, message):
+        """Список чатов"""
+        chat_list = "<b>📋 Список чатов:</b>\n\n"
+        
+        for i, chat in enumerate(self.target_chats, 1):
+            chat_list += f"{i}. {chat}\n"
+        
+        chat_list += f"\n<b>🎯 Особый чат:</b> {self.special_chat}"
+        chat_list += f"\n<b>📊 Всего:</b> {len(self.target_chats)} чатов"
+        
+        await utils.answer(message, chat_list)
+    
+    async def _stealth_loop(self):
+        """Основной цикл скрытой пересылки"""
+        logger.info(f"Цикл запущен, режим: {'скрытый' if self.hide_source else 'открытый'}")
+        
+        while self.is_running:
+            try:
+                # Проходим по всем чатам
+                for i, chat in enumerate(self.target_chats):
+                    if not self.is_running:
+                        break
+                    
+                    self.current_chat_index = i
+                    
+                    try:
+                        if self.hide_source and self.message_text:
+                            # СКРЫТЫЙ РЕЖИМ: копируем текст сообщения
+                            await self._send_hidden_copy(chat, self.message_text)
+                        else:
+                            # ОТКРЫТЫЙ РЕЖИМ: пересылаем оригинал
+                            await self._forward_message(chat)
+                        
+                        self.message_count += 1
+                        
+                        # Проверяем особое сообщение
+                        if self.message_count % self.special_every == 0:
+                            await self._send_special_message()
+                            self.special_count += 1
+                        
+                        logger.info(f"Отправлено в {chat} (режим: {'скрытый' if self.hide_source else 'открытый'})")
+                        
+                        # Ждем интервал между чатами
+                        if i < len(self.target_chats) - 1:
+                            for _ in range(self.chat_interval):
+                                if not self.is_running:
+                                    break
+                                await asyncio.sleep(1)
+                        
+                    except Exception as e:
+                        logger.error(f"Ошибка в {chat}: {e}")
+                        await asyncio.sleep(5)
+                
+                # Завершили цикл
+                self.cycle_count += 1
+                self.current_chat_index = 0
+                
+                # Ждем полный цикл
+                if self.is_running:
+                    logger.info(f"Цикл #{self.cycle_count} завершен. Ждем {self.full_cycle} сек")
+                    
+                    for _ in range(self.full_cycle):
+                        if not self.is_running:
+                            break
+                        await asyncio.sleep(1)
+                
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                logger.error(f"Ошибка в цикле: {e}")
+                await asyncio.sleep(30)
+    
+    async def _load_source_message(self):
+        """Загрузка исходного сообщения"""
+        try:
+            # Парсим ссылку: https://t.me/manqiin/54
+            parts = self.source_link.split('/')
+            if len(parts) >= 5:
+                channel = parts[3]  # manqiin
+                msg_id = int(parts[4])  # 54
+                
+                # Получаем сообщение
+                msg = await self.client.get_messages(channel, ids=msg_id)
+                
+                if msg:
+                    # Извлекаем текст и медиа информацию
+                    self.message_text = msg.text or msg.caption or ""
+                    
+                    # Если есть медиа, сохраняем информацию
+                    self.message_media = msg.media
+                    self.message_entities = msg.entities
+                    
+                    logger.info(f"Сообщение загружено: {len(self.message_text)} символов")
+                    return True
+            
+            logger.warning("Не удалось загрузить сообщение")
+            return False
+            
+        except Exception as e:
+            logger.error(f"Ошибка загрузки сообщения: {e}")
+            return False
+    
+    async def _send_hidden_copy(self, chat, text):
+        """Отправка скрытой копии сообщения"""
+        try:
+            if hasattr(self, 'message_media') and self.message_media:
+                # Если есть медиа, отправляем медиа с текстом
+                await self.client.send_file(
+                    chat,
+                    self.message_media,
+                    caption=text,
+                    parse_mode=None
+                )
+            else:
+                # Если только текст
+                await self.client.send_message(
+                    chat,
+                    text,
+                    parse_mode=None
+                )
+            return True
+            
+        except Exception as e:
+            logger.error(f"Ошибка отправки скрытой копии: {e}")
+            return False
+    
+    async def _forward_message(self, chat):
+        """Пересылка оригинального сообщения"""
+        try:
+            parts = self.source_link.split('/')
+            channel = parts[3]
+            msg_id = int(parts[4])
+            
+            msg = await self.client.get_messages(channel, ids=msg_id)
+            if msg:
+                await msg.forward_to(chat)
+                return True
+            return False
+            
+        except Exception as e:
+            logger.error(f"Ошибка пересылки: {e}")
+            return False
+    
+    async def _send_special_message(self):
+        """Отправка особого сообщения"""
+        try:
+            await self.client.send_message(
+                self.special_chat,
+                self.special_text,
+                parse_mode=None
+            )
+            logger.info(f"Особое сообщение отправлено в {self.special_chat}")
+            return True
+        except Exception as e:
+            logger.error(f"Ошибка особого сообщения: {e}")
+            return False
+    
+    async def on_unload(self):
+        """Очистка"""
+        self.is_running = False
+        if self.task:
+            self.task.cancel()
