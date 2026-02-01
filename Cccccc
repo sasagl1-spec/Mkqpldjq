@@ -1,0 +1,359 @@
+# meta developer: @your_username
+# meta pic: https://img.icons8.com/color/48/000000/broadcast-message.png
+# meta description: Автоматическая пересылка сообщений в чаты по расписанию
+# scope: hikka_only
+# scope: hikka_min 1.6.0
+
+import asyncio
+import time
+from datetime import datetime
+from .. import loader, utils
+import logging
+
+logger = logging.getLogger(__name__)
+
+@loader.tds
+class CrossPoster(loader.Module):
+    """Пересылка сообщений в чаты по расписанию"""
+    
+    strings = {
+        "name": "CrossPoster",
+        "help": "🔄 <b>Автоматическая пересылка</b>\n\n"
+                "<b>Команды:</b>\n"
+                ".crossstart - Запустить пересылку\n"
+                ".crossstop - Остановить пересылку\n"
+                ".crossstatus - Статус\n"
+                ".crosstest - Тестовая отправка\n"
+                ".crosscount - Счетчик сообщений\n",
+        "started": "✅ <b>Пересылка запущена!</b>\n"
+                   "📤 <b>Источник:</b> @manqiin/54\n"
+                   "📢 <b>Чаты:</b> {} шт.\n"
+                   "⏱ <b>Цикл:</b> {} сек\n"
+                   "⏳ <b>Интервал:</b> {} сек между чатами\n"
+                   "🎯 <b>Особый:</b> @TonTakeGarant каждые {} сообщений",
+        "stopped": "⏹️ <b>Пересылка остановлена</b>",
+        "already_running": "⚠️ <b>Уже работает</b>",
+        "not_running": "📭 <b>Не запущена</b>",
+        "status": "📊 <b>Статус пересылки:</b>\n"
+                  "🔄 <b>Состояние:</b> {}\n"
+                  "📤 <b>Отправлено:</b> {} сообщений\n"
+                  "🎯 <b>Особых:</b> {} отправок\n"
+                  "⏰ <b>Следующая отправка:</b> через {} сек\n"
+                  "💬 <b>Текущий чат:</b> {}",
+        "test_sent": "🧪 <b>Тестовое сообщение отправлено во все чаты</b>",
+        "message_sent": "📤 Отправлено в {} | Всего: {}",
+        "special_sent": "🎯 <b>Особое сообщение отправлено в @TonTakeGarant</b>",
+        "error": "❌ <b>Ошибка:</b> {}",
+        "counter": "📊 <b>Счетчик сообщений:</b>\n"
+                   "• Общих отправок: {}\n"
+                   "• Особых отправок: {}\n"
+                   "• Циклов: {}\n"
+                   "• Последняя отправка: {}"
+    }
+    
+    def __init__(self):
+        self.task = None
+        self.is_running = False
+        self.source_message = "https://t.me/manqiin/54"
+        
+        # Список чатов для пересылки
+        self.target_chats = [
+            "@GalaxyChat_Garants",
+            "@garantferz", 
+            "@loneasCHATIK",
+            "@nft_chatp",
+            "@chatsell_clix",
+            "@syndicate_garant",
+            "@VIP_GARANT_Chat",
+            "@nft_chatiqs"
+        ]
+        
+        # Особый чат
+        self.special_chat = "@TonTakeGarant"
+        self.special_message = """🎯 НАКРУТКА ДЛЯ ВСЕХ ПЛАТФОРМ:
+— Telegram, TikTok, ВКонтакте, Facebook, Instagram
+Услуги: просмотры, реакции, подписчики, репосты, рефералы.
+
+⭐️ ЗВЁЗДЫ ТЕЛЕГРАМ (от 1,000 шт.) — 1,450₽
+
+🇺🇸 ПРОДАМ АККАУНТЫ США (старые):
+• 2015 — 950₽
+• 2016 — 750₽
+• 2017 — 520₽
+• 2018 — 450₽
+
+💵 Оплату принимаю в ₽/Крипте/$"""
+        
+        # Тайминги (в секундах)
+        self.full_cycle = 607      # Полный цикл
+        self.chat_interval = 16    # Между чатами
+        self.special_every = 73    # Особое сообщение каждые N общих
+        
+        # Статистика
+        self.message_count = 0
+        self.special_count = 0
+        self.cycle_count = 0
+        self.last_sent_time = None
+        self.current_chat_index = 0
+        self.next_send_time = 0
+        
+    async def client_ready(self, client, db):
+        self.client = client
+        self.db = db
+        logger.info("CrossPoster загружен")
+    
+    @loader.command(
+        ru_doc="Запустить автоматическую пересылку",
+        en_doc="Start automatic cross-posting"
+    )
+    async def crossstartcmd(self, message):
+        """Запустить пересылку"""
+        if self.is_running:
+            await utils.answer(message, self.strings("already_running"))
+            return
+        
+        self.is_running = True
+        self.task = asyncio.create_task(self._crosspost_loop())
+        
+        await utils.answer(
+            message,
+            self.strings("started").format(
+                len(self.target_chats),
+                self.full_cycle,
+                self.chat_interval,
+                self.special_every
+            )
+        )
+        
+        logger.info(f"Пересылка запущена, чатов: {len(self.target_chats)}")
+    
+    @loader.command(
+        ru_doc="Остановить пересылку",
+        en_doc="Stop cross-posting"
+    )
+    async def crossstopcmd(self, message):
+        """Остановить пересылку"""
+        if not self.is_running:
+            await utils.answer(message, self.strings("not_running"))
+            return
+        
+        self.is_running = False
+        if self.task:
+            self.task.cancel()
+            self.task = None
+        
+        await utils.answer(message, self.strings("stopped"))
+        logger.info("Пересылка остановлена")
+    
+    @loader.command(
+        ru_doc="Статус пересылки",
+        en_doc="Cross-posting status"
+    )
+    async def crossstatuscmd(self, message):
+        """Статус"""
+        status = "🟢 Работает" if self.is_running else "🔴 Остановлена"
+        
+        time_left = "—"
+        current_chat = "—"
+        
+        if self.is_running and self.next_send_time > time.time():
+            time_left = int(self.next_send_time - time.time())
+            if 0 <= self.current_chat_index < len(self.target_chats):
+                current_chat = self.target_chats[self.current_chat_index]
+        
+        await utils.answer(
+            message,
+            self.strings("status").format(
+                status,
+                self.message_count,
+                self.special_count,
+                time_left,
+                current_chat
+            )
+        )
+    
+    @loader.command(
+        ru_doc="Тестовая отправка во все чаты",
+        en_doc="Test send to all chats"
+    )
+    async def crosstestcmd(self, message):
+        """Тестовая отправка"""
+        try:
+            # Отправляем в обычные чаты
+            for chat in self.target_chats:
+                try:
+                    await self._forward_to_chat(chat)
+                    logger.info(f"Тест отправлен в {chat}")
+                    await asyncio.sleep(1)  # Маленькая пауза
+                except Exception as e:
+                    logger.error(f"Ошибка отправки в {chat}: {e}")
+            
+            # Отправляем особое сообщение
+            await self._send_special_message()
+            
+            await utils.answer(message, self.strings("test_sent"))
+            
+        except Exception as e:
+            await utils.answer(message, self.strings("error").format(str(e)))
+    
+    @loader.command(
+        ru_doc="Счетчик сообщений",
+        en_doc="Message counter"
+    )
+    async def crosscountcmd(self, message):
+        """Счетчик"""
+        last_time = "—"
+        if self.last_sent_time:
+            last_time = datetime.fromtimestamp(self.last_sent_time).strftime("%H:%M:%S")
+        
+        await utils.answer(
+            message,
+            self.strings("counter").format(
+                self.message_count,
+                self.special_count,
+                self.cycle_count,
+                last_time
+            )
+        )
+    
+    @loader.command(
+        ru_doc="Отправить только особое сообщение",
+        en_doc="Send only special message"
+    )
+    async def crossspecialcmd(self, message):
+        """Особое сообщение"""
+        try:
+            await self._send_special_message()
+            await utils.answer(message, self.strings("special_sent"))
+        except Exception as e:
+            await utils.answer(message, self.strings("error").format(str(e)))
+    
+    @loader.command(
+        ru_doc="Показать список чатов",
+        en_doc="Show chat list"
+    )
+    async def crosslistcmd(self, message):
+        """Список чатов"""
+        chat_list = "📋 <b>Список чатов:</b>\n\n"
+        
+        for i, chat in enumerate(self.target_chats, 1):
+            chat_list += f"{i}. {chat}\n"
+        
+        chat_list += f"\n🎯 <b>Особый чат:</b> {self.special_chat}"
+        chat_list += f"\n\n📊 <b>Всего чатов:</b> {len(self.target_chats)}"
+        
+        await utils.answer(message, chat_list)
+    
+    async def _crosspost_loop(self):
+        """Основной цикл пересылки"""
+        logger.info("Цикл пересылки запущен")
+        
+        while self.is_running:
+            try:
+                # Отправляем во все обычные чаты с интервалом
+                for i, chat in enumerate(self.target_chats):
+                    if not self.is_running:
+                        break
+                    
+                    try:
+                        # Пересылаем сообщение
+                        await self._forward_to_chat(chat)
+                        
+                        # Обновляем статистику
+                        self.message_count += 1
+                        self.last_sent_time = time.time()
+                        self.current_chat_index = i
+                        
+                        # Проверяем, нужно ли отправить особое сообщение
+                        if self.message_count % self.special_every == 0:
+                            await self._send_special_message()
+                            self.special_count += 1
+                        
+                        logger.info(f"Отправлено в {chat} | Всего: {self.message_count}")
+                        
+                        # Ждем интервал между чатами (кроме последнего)
+                        if i < len(self.target_chats) - 1:
+                            self.next_send_time = time.time() + self.chat_interval
+                            for _ in range(self.chat_interval):
+                                if not self.is_running:
+                                    break
+                                await asyncio.sleep(1)
+                        
+                    except Exception as e:
+                        logger.error(f"Ошибка отправки в {chat}: {e}")
+                        await asyncio.sleep(5)  # Пауза при ошибке
+                
+                # Увеличиваем счетчик циклов
+                self.cycle_count += 1
+                
+                # Сбрасываем индекс чата
+                self.current_chat_index = 0
+                
+                # Ждем полный цикл (607 секунд)
+                if self.is_running:
+                    wait_time = self.full_cycle
+                    self.next_send_time = time.time() + wait_time
+                    
+                    logger.info(f"Цикл #{self.cycle_count} завершен. Ждем {wait_time} сек")
+                    
+                    # Разбиваем ожидание на части для возможности прерывания
+                    for _ in range(wait_time):
+                        if not self.is_running:
+                            break
+                        await asyncio.sleep(1)
+                
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                logger.error(f"Ошибка в цикле пересылки: {e}")
+                await asyncio.sleep(30)  # Пауза при критической ошибке
+    
+    async def _forward_to_chat(self, chat):
+        """Пересылка сообщения в чат"""
+        try:
+            # Парсим ссылку на сообщение
+            # Формат: https://t.me/manqiin/54
+            parts = self.source_message.split('/')
+            if len(parts) >= 5:
+                channel = parts[3]  # manqiin
+                msg_id = int(parts[4])  # 54
+                
+                # Получаем сообщение
+                source_msg = await self.client.get_messages(channel, ids=msg_id)
+                
+                if source_msg:
+                    # Пересылаем сообщение
+                    await source_msg.forward_to(chat)
+                    return True
+            
+            # Если не удалось переслать, отправляем текстовое сообщение
+            await self.client.send_message(
+                chat,
+                f"📨 Сообщение из: {self.source_message}",
+                parse_mode=None
+            )
+            return True
+            
+        except Exception as e:
+            logger.error(f"Ошибка пересылки в {chat}: {e}")
+            return False
+    
+    async def _send_special_message(self):
+        """Отправка особого сообщения"""
+        try:
+            await self.client.send_message(
+                self.special_chat,
+                self.special_message,
+                parse_mode=None
+            )
+            logger.info(f"Особое сообщение отправлено в {self.special_chat}")
+            return True
+        except Exception as e:
+            logger.error(f"Ошибка отправки особого сообщения: {e}")
+            return False
+    
+    async def on_unload(self):
+        """Очистка при выгрузке"""
+        self.is_running = False
+        if self.task:
+            self.task.cancel()
