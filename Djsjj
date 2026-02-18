@@ -1,0 +1,225 @@
+# meta developer: @твой_ник
+# meta pic: https://img.icons8.com/color/48/000000/artificial-intelligence.png
+# scope: hikka_only
+# scope: hikka_min 1.6.0
+
+import asyncio
+import aiohttp
+from .. import loader, utils
+import logging
+
+logger = logging.getLogger(__name__)
+
+@loader.tds
+class GeminiChatMod(loader.Module):
+    """Общение с пользователем через Gemini AI"""
+
+    strings = {
+        "name": "GeminiChat",
+        "no_api_key": "🚫 <b>API ключ не настроен!</b>\nИспользуйте <code>.gkey <ваш_ключ></code>",
+        "config_done": "✅ <b>Ключ сохранен.</b>",
+        "already_on": "⚠️ <b>Уже работает</b>",
+        "already_off": "⚠️ <b>Уже остановлен</b>",
+        "started": "🤖 <b>Режим общения с Gemini активирован для {}</b>",
+        "stopped": "⏹️ <b>Остановлен</b>",
+        "status_on": "🟢 <b>Статус:</b> Работает для {}",
+        "status_off": "🔴 <b>Статус:</b> Не активен",
+        "waiting": "🤔 <b>Gemini думает...</b>",
+        "error": "❌ <b>Ошибка Gemini:</b> {}",
+        "models_list": "📋 <b>Доступные модели:</b>\n{}",
+        "no_models": "❌ Не удалось получить список моделей"
+    }
+
+    def __init__(self):
+        self.target_user = "@rostovskiy7777"
+        self.config = loader.ModuleConfig(
+            loader.ConfigValue(
+                "gemini_api_key",
+                None,
+                "API ключ Google Gemini",
+                validator=loader.validators.String()
+            ),
+            loader.ConfigValue(
+                "gemini_model",
+                "models/gemini-1.5-flash",  # По умолчанию
+                "Модель Gemini",
+                validator=loader.validators.String()
+            ),
+            loader.ConfigValue(
+                "system_prompt",
+                "Ты дружелюбный ассистент. Отвечай кратко.",
+                "Системный промпт",
+                validator=loader.validators.String()
+            )
+        )
+        self.is_active = False
+        self.user_id = None
+        self.available_models = []
+
+    async def client_ready(self, client, db):
+        self.client = client
+        self.db = db
+        try:
+            entity = await client.get_entity(self.target_user)
+            self.user_id = entity.id
+            logger.info(f"Найден пользователь {self.target_user}")
+        except:
+            logger.warning(f"Не удалось найти {self.target_user}")
+
+    @loader.command(ru_doc="Установить API ключ")
+    async def gkeycmd(self, message):
+        key = utils.get_args_raw(message)
+        if not key:
+            await utils.answer(message, "❌ Укажите ключ")
+            return
+        self.config["gemini_api_key"] = key
+        await utils.answer(message, self.strings("config_done"))
+
+    @loader.command(ru_doc="Показать доступные модели")
+    async def gmodelscmd(self, message):
+        """Проверить какие модели работают"""
+        if not self.config["gemini_api_key"]:
+            await utils.answer(message, self.strings("no_api_key"))
+            return
+        
+        models = await self._get_available_models()
+        if models:
+            text = "\n".join([f"• <code>{m}</code>" for m in models[:10]])
+            await utils.answer(message, self.strings("models_list").format(text))
+        else:
+            await utils.answer(message, self.strings("no_models"))
+
+    @loader.command(ru_doc="Установить модель")
+    async def gmodelcmd(self, message):
+        """<модель> - Выбрать модель"""
+        model = utils.get_args_raw(message)
+        if not model:
+            await utils.answer(message, f"📝 Текущая модель: {self.config['gemini_model']}")
+            return
+        
+        # Добавляем models/ если нужно
+        if not model.startswith("models/"):
+            model = f"models/{model}"
+        
+        self.config["gemini_model"] = model
+        await utils.answer(message, f"✅ Модель изменена на: {model}")
+
+    @loader.command(ru_doc="Запустить авто-ответ")
+    async def gstartcmd(self, message):
+        if self.is_active:
+            await utils.answer(message, self.strings("already_on").format(self.target_user))
+            return
+        if not self.config["gemini_api_key"]:
+            await utils.answer(message, self.strings("no_api_key"))
+            return
+        self.is_active = True
+        await utils.answer(message, self.strings("started").format(self.target_user))
+
+    @loader.command(ru_doc="Остановить")
+    async def gstopcmd(self, message):
+        if not self.is_active:
+            await utils.answer(message, self.strings("already_off"))
+            return
+        self.is_active = False
+        await utils.answer(message, self.strings("stopped"))
+
+    @loader.command(ru_doc="Статус")
+    async def gstatuscmd(self, message):
+        status = self.strings("status_on").format(self.target_user) if self.is_active else self.strings("status_off")
+        await utils.answer(
+            message,
+            f"{status}\n🤖 <b>Модель:</b> {self.config['gemini_model']}\n🔑 <b>Ключ:</b> {'✅' if self.config['gemini_api_key'] else '❌'}"
+        )
+
+    @loader.command(ru_doc="Быстрый тест")
+    async def gtestcmd(self, message):
+        """Отправить тестовый запрос 'Привет'"""
+        if not self.config["gemini_api_key"]:
+            await utils.answer(message, self.strings("no_api_key"))
+            return
+        
+        thinking = await utils.answer(message, self.strings("waiting"))
+        response = await self._query_gemini("Привет! Как дела?")
+        await thinking.edit(f"🧪 <b>Тестовый ответ:</b>\n{response}")
+
+    async def watcher(self, message):
+        if not self.is_active:
+            return
+        if not self.config["gemini_api_key"]:
+            return
+        if not message.is_private:
+            return
+        if message.sender_id != self.user_id:
+            return
+        if message.out:
+            return
+        if not message.raw_text:
+            return
+
+        logger.info(f"Сообщение от {self.target_user}")
+        thinking = await message.reply(self.strings("waiting"))
+        response = await self._query_gemini(message.raw_text)
+        await thinking.edit(response)
+
+    async def _get_available_models(self):
+        """Получить список доступных моделей"""
+        api_key = self.config["gemini_api_key"]
+        url = f"https://generativelanguage.googleapis.com/v1beta/models?key={api_key}"
+        
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(url) as resp:
+                    if resp.status == 200:
+                        data = await resp.json()
+                        models = [m["name"] for m in data.get("models", []) 
+                                 if "generateContent" in m.get("supportedGenerationMethods", [])]
+                        self.available_models = models
+                        return models
+                    return None
+        except Exception as e:
+            logger.error(f"Ошибка получения моделей: {e}")
+            return None
+
+    async def _query_gemini(self, user_text):
+        api_key = self.config["gemini_api_key"]
+        model = self.config["gemini_model"]
+        
+        # Пробуем разные форматы URL если основной не работает
+        urls_to_try = [
+            f"https://generativelanguage.googleapis.com/v1beta/{model}:generateContent?key={api_key}",
+            f"https://generativelanguage.googleapis.com/v1/models/{model.replace('models/', '')}:generateContent?key={api_key}",
+            f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={api_key}",
+            f"https://generativelanguage.googleapis.com/v1/models/gemini-1.5-flash:generateContent?key={api_key}"
+        ]
+
+        payload = {
+            "contents": [{"parts": [{"text": user_text}]}],
+            "system_instruction": {"parts": [{"text": self.config["system_prompt"]}]},
+            "generationConfig": {"temperature": 0.7, "maxOutputTokens": 800}
+        }
+
+        headers = {"Content-Type": "application/json"}
+
+        for url in urls_to_try:
+            try:
+                async with aiohttp.ClientSession() as session:
+                    async with session.post(url, json=payload, headers=headers, timeout=15) as resp:
+                        if resp.status == 200:
+                            data = await resp.json()
+                            try:
+                                text = data["candidates"][0]["content"]["parts"][0]["text"]
+                                return text.strip()
+                            except:
+                                return "❌ Не удалось распарсить ответ"
+                        elif resp.status == 404:
+                            continue  # Пробуем следующий URL
+                        else:
+                            error = await resp.text()
+                            return f"❌ Ошибка {resp.status}"
+            except Exception as e:
+                continue
+
+        return "❌ Не удалось подключиться к Gemini. Проверьте ключ и модель."
+
+    async def on_unload(self):
+        self.is_active = False
